@@ -6,6 +6,8 @@ CXX = g++
 WARN_FLAGS = -O3 -g -Wall -Wextra -Wabi -Wctor-dtor-privacy -Wnon-virtual-dtor -Wreorder -Wstrict-null-sentinel -Woverloaded-virtual -Wshadow -Wcast-align -Wpointer-arith -Wwrite-strings -Wundef -Wredundant-decls -Werror # -Weffc++
 endif
 
+CXXFLAGS = -std=c++11
+
 BIN = test
 OBJECTS = OptionParser.o test.o
 

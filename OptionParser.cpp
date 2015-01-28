@@ -130,7 +130,8 @@ OptionParser::OptionParser() :
   _usage(_("%prog [options]")),
   _add_help_option(true),
   _add_version_option(true),
-  _interspersed_args(true) {}
+  _interspersed_args(true),
+  _positionalArgs() {}
 
 Option& OptionParser::add_option(const string& opt) {
   const string tmp[1] = { opt };
@@ -155,17 +156,27 @@ Option& OptionParser::add_option(const vector<string>& v) {
         option.dest(str_replace(s, "-", "_"));
       option._long_opts.insert(s);
       _optmap_l[s] = &option;
-    } else {
+    } 
+    else if (it->size() >= 2 && it->substr(0, 1) == "-") {
       const string s = it->substr(1,1);
       if (dest_fallback == "")
         dest_fallback = s;
       option._short_opts.insert(s);
       _optmap_s[s] = &option;
     }
+    else {
+      throw InvalidOptionSpec(std::string("'") + *it + "' is not a long or short option.");
+    }
   }
   if (option.dest() == "")
     option.dest(dest_fallback);
   return option;
+}
+
+PositionalArg& OptionParser::add_argument(const std::string metavar) {
+  set_usage(usage() + " " + metavar);
+  _positionalArgs.push_back(PositionalArg(metavar));
+  return _positionalArgs.back();
 }
 
 OptionParser& OptionParser::add_option_group(const OptionGroup& group) {
@@ -270,6 +281,8 @@ Values& OptionParser::parse_args(const vector<string>& v) {
     _opts.splice(_opts.begin(), _opts, --(_opts.end()));
   }
 
+  size_t positionalIndex = 0;
+
   while (not _remaining.empty()) {
     const string arg = _remaining.front();
 
@@ -283,16 +296,37 @@ Values& OptionParser::parse_args(const vector<string>& v) {
     } else if (arg.substr(0,1) == "-" and arg.length() > 1) {
       handle_short_opt(arg.substr(1,1), arg);
     } else {
-      _remaining.pop_front();
-      _leftover.push_back(arg);
-      if (not interspersed_args())
-        break;
+      if (positionalIndex < _positionalArgs.size()) {
+        _values.add_positional_argument(arg);
+        positionalIndex++;
+        _remaining.pop_front();
+      }
+      else {
+        print_usage();
+        ::exit(1);
+      }
     }
   }
   while (not _remaining.empty()) {
-    const string arg = _remaining.front();
-    _remaining.pop_front();
-    _leftover.push_back(arg);
+    if (positionalIndex < _positionalArgs.size()) {
+      _values.add_positional_argument(_remaining.front());
+      positionalIndex++;
+      _remaining.pop_front();
+    }
+    else {
+      print_usage();
+      ::exit(1);
+    }
+  }
+
+  if (not _remaining.empty()) {
+    print_usage();
+    ::exit(1);
+  }
+
+  if (positionalIndex < _positionalArgs.size()) {
+    print_usage();
+    ::exit(1);
   }
 
   for (strMap::const_iterator it = _defaults.begin(); it != _defaults.end(); ++it) {
@@ -304,6 +338,13 @@ Values& OptionParser::parse_args(const vector<string>& v) {
     if (it->get_default() != "" and not _values.is_set(it->dest()))
         _values[it->dest()] = it->get_default();
   }
+
+  std::map<std::string, int> positionalMap;
+  for (size_t i=0; i<_positionalArgs.size(); i++) {
+    positionalMap[_positionalArgs[i].metavar()] = i;
+  }
+
+  _values.set_positional_arg_names(positionalMap);
 
   return _values;
 }
@@ -372,6 +413,18 @@ string OptionParser::format_option_help(unsigned int indent /* = 2 */) const {
   return ss.str();
 }
 
+string OptionParser::format_argument_help(unsigned int indent) const {
+  stringstream ss;
+
+  for (PositionalArg arg : _positionalArgs) {
+    if (arg.help() != SUPPRESS_HELP) {
+      ss << arg.format_help(indent);
+    }
+  }
+
+  return ss.str();
+}
+
 string OptionParser::format_help() const {
   stringstream ss;
 
@@ -381,6 +434,12 @@ string OptionParser::format_help() const {
   if (description() != "")
     ss << str_format(description(), 0, cols()) << endl;
 
+  if (_positionalArgs.size() > 0) {
+    ss << _("Arguments") << ":" << endl;
+    ss << format_argument_help();
+    ss << "\n";
+  }
+  
   ss << _("Options") << ":" << endl;
   ss << format_option_help();
 
@@ -460,6 +519,27 @@ void Values::is_set_by_user(const string& d, bool yes) {
   else
     _userSet.erase(d);
 }
+
+void Values::set_positional_arg_names(std::map<std::string,int> newPositionalArgNames) {
+  _positionalArgNames = newPositionalArgNames;
+}
+
+void Values::add_positional_argument(std::string arg) {
+  _positionalArgs.push_back(arg);
+}
+
+std::string Values::get_positional(int index) {
+  return _positionalArgs[index];
+}
+
+std::string Values::get_positional(std::string name) {
+  if (_positionalArgNames.count(name)) {
+    return _positionalArgs[_positionalArgNames[name]];
+  }
+  else
+    throw NoSuchArgumentException(name);
+}
+
 ////////// } class Values //////////
 
 ////////// class Option { //////////
@@ -552,5 +632,34 @@ Option& Option::action(const string& a) {
   return *this;
 }
 ////////// } class Option //////////
+
+PositionalArg::PositionalArg(std::string initMetavar) :
+  _metavar(initMetavar)
+{
+}
+
+std::string PositionalArg::format_help(int indent) {
+  stringstream ss;
+  
+  for (int i=0; i<indent; i++)
+    ss << " ";
+  
+  ss << _metavar << ": " << _help << "\n";
+
+  return ss.str();
+}
+
+std::string PositionalArg::metavar() const {
+  return _metavar;
+}
+
+std::string PositionalArg::help() const {
+  return _help;
+}
+    
+PositionalArg& PositionalArg::help(std::string newHelp) {
+  _help = newHelp;
+  return *this;
+}
 
 }

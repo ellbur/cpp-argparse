@@ -67,6 +67,7 @@
 #include <set>
 #include <iostream>
 #include <sstream>
+#include <exception>
 
 namespace optparse {
 
@@ -76,6 +77,7 @@ class Option;
 class Values;
 class Value;
 class Callback;
+class PositionalArg;
 
 typedef std::map<std::string,std::string> strMap;
 typedef std::map<std::string,std::list<std::string> > lstMap;
@@ -83,6 +85,33 @@ typedef std::map<std::string,Option const*> optMap;
 
 const char* const SUPPRESS_HELP = "SUPPRESS" "HELP";
 const char* const SUPPRESS_USAGE = "SUPPRESS" "USAGE";
+
+struct InvalidOptionSpec : public std::exception {
+  InvalidOptionSpec(std::string message) : _message(message) { }
+  virtual ~InvalidOptionSpec() noexcept { }
+
+  virtual char const* what() const noexcept {
+    return _message.c_str();
+  }
+  
+  private:
+    std::string _message;
+};
+
+struct NoSuchArgumentException : public std::exception {
+  NoSuchArgumentException(std::string initName) : _name(initName) {
+    _message = std::string("No argument named ") + _name;
+  }
+  virtual ~NoSuchArgumentException() noexcept { }
+
+  virtual char const* what() const noexcept {
+    return _message.c_str();
+  }
+  
+  private:
+    std::string _name;
+    std::string _message;
+};
 
 //! Class for automatic conversion from string -> anytype
 class Value {
@@ -107,13 +136,19 @@ class Value {
 
 class Values {
   public:
-    Values() : _map() {}
+    Values() : _map(), _positionalArgNames(), _positionalArgs() {}
     const std::string& operator[] (const std::string& d) const;
     std::string& operator[] (const std::string& d) { return _map[d]; }
     bool is_set(const std::string& d) const { return _map.find(d) != _map.end(); }
     bool is_set_by_user(const std::string& d) const { return _userSet.find(d) != _userSet.end(); }
     void is_set_by_user(const std::string& d, bool yes);
     Value get(const std::string& d) const { return (is_set(d)) ? Value((*this)[d]) : Value(); }
+
+    void set_positional_arg_names(std::map<std::string,int> newPositionalArgNames);
+    void add_positional_argument(std::string arg);
+
+    std::string get_positional(int index);
+    std::string get_positional(std::string name);
 
     typedef std::list<std::string>::iterator iterator;
     typedef std::list<std::string>::const_iterator const_iterator;
@@ -124,6 +159,9 @@ class Values {
     strMap _map;
     lstMap _appendMap;
     std::set<std::string> _userSet;
+    
+    std::map<std::string,int> _positionalArgNames;
+    std::vector<std::string> _positionalArgs;
 };
 
 class OptionParser {
@@ -158,6 +196,7 @@ class OptionParser {
     Option& add_option(const std::string& opt1, const std::string& opt2);
     Option& add_option(const std::string& opt1, const std::string& opt2, const std::string& opt3);
     Option& add_option(const std::vector<std::string>& opt);
+    PositionalArg& add_argument(const std::string metavar);
 
     Values& parse_args(int argc, char const* const* argv);
     Values& parse_args(const std::vector<std::string>& args);
@@ -173,6 +212,7 @@ class OptionParser {
 
     std::string format_help() const;
     std::string format_option_help(unsigned int indent = 2) const;
+    std::string format_argument_help(unsigned int indent = 2) const;
     void print_help() const;
 
     void set_usage(const std::string& u);
@@ -214,6 +254,7 @@ class OptionParser {
     optMap _optmap_l;
     strMap _defaults;
     std::list<OptionGroup const*> _groups;
+    std::vector<PositionalArg> _positionalArgs;
 
     std::list<std::string> _remaining;
     std::list<std::string> _leftover;
@@ -275,7 +316,7 @@ class Option {
 
     std::set<std::string> _short_opts;
     std::set<std::string> _long_opts;
-
+    
     std::string _action;
     std::string _type;
     std::string _dest;
@@ -288,6 +329,21 @@ class Option {
     Callback* _callback;
 
     friend class OptionParser;
+};
+
+class PositionalArg {
+  public:
+    PositionalArg(std::string metavar);
+    
+    std::string format_help(int indent = 2);
+    
+    std::string metavar() const;
+    std::string help() const;
+    
+    PositionalArg& help(std::string help);
+  private:
+    std::string _metavar;
+    std::string _help;
 };
 
 class Callback {
